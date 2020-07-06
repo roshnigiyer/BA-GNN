@@ -4,7 +4,6 @@ Keras-Applications==1.0.8
 Keras-Preprocessing==1.1.0
 Markdown==3.1.1
 MarkupSafe==1.1.1
-Pillow==6.2.1
 PyWavelets==1.1.1
 PyYAML==5.2
 Pygments==2.5.2
@@ -15,7 +14,6 @@ absl-py==0.8.1
 astor==0.8.0
 attrs==19.3.0
 backcall==0.1.0
-bleach==3.1.0
 cachetools==3.1.1
 certifi==2019.11.28
 cffi==1.14.0
