@@ -1,4 +1,3 @@
-# README #
 
 # Models #  
 Models utilize the Pytorch Geometric Framework. See requirements.txt for environment details.
