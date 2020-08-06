@@ -104,12 +104,19 @@ class BRGCN(MessagePassing):
 
         final_node_embeddings = torch.zeros(self.num_nodes, self.out_channels)
 
+        ####################
+        # user configurable#
+        ####################
+        applySoftmax = True  # attention normalization
         num_relations_outer = self.num_relations # max = self.num_relations
         num_relations_inner = self.num_relations # max = self.num_relations
+        num_rows = self.num_nodes  # max = self.num_nodes
+        ####################
+
         freq_relations_outer = self.topKElems(edge_type, num_relations_outer)
         freq_relations_inner = self.topKElems(edge_type, num_relations_inner)
 
-        num_rows = self.num_nodes # max = self.num_nodes
+
         e0 = edge_index[0][edge_index[0] < num_rows]
         e1 = edge_index[1][edge_index[1] < num_rows]
         new_edge_index = torch.stack([e0, e1], dim=0)
@@ -152,17 +159,23 @@ class BRGCN(MessagePassing):
                                 val = v_r_b
                             else:
                                 val = torch.matmul(k_r_b, k_r_b.t())
+                                if applySoftmax:
+                                    val = F.log_softmax(val, dim=1)
                                 val = self.our_sparse_multiply(val, edge_index)
                                 val = torch.matmul(val, v_r_b)
 
                         else:
                             if (k_r_b is None):
                                 val = torch.matmul(q_r_a, q_r_a.t())
+                                if applySoftmax:
+                                    val = F.log_softmax(val, dim=1)
                                 val = self.our_sparse_multiply(val, edge_index)
                                 val = torch.matmul(val, v_r_b)
 
                             else:
                                 val = torch.matmul(q_r_a, k_r_b.t())
+                                if applySoftmax:
+                                    val = F.log_softmax(val, dim=1)
                                 val = self.our_sparse_multiply(val, edge_index)
                                 val = torch.matmul(val, v_r_b)
 
@@ -173,17 +186,23 @@ class BRGCN(MessagePassing):
                                 val = v_r_b
                             else:
                                 val = torch.matmul(v_r_b, k_r_b.t())
+                                if applySoftmax:
+                                    val = F.log_softmax(val, dim=1)
                                 val = self.our_sparse_multiply(val, edge_index)
                                 val = torch.matmul(val, k_r_b)
 
                         else:
                             if (k_r_b is None):
                                 val = torch.matmul(v_r_b, q_r_a.t())
+                                if applySoftmax:
+                                    val = F.log_softmax(val, dim=1)
                                 val = self.our_sparse_multiply(val, edge_index)
                                 val = torch.matmul(val, q_r_a)
 
                             else:
                                 val = torch.matmul(v_r_b, q_r_a.t())
+                                if applySoftmax:
+                                    val = F.log_softmax(val, dim=1)
                                 val = self.our_sparse_multiply(val, edge_index)
                                 val = torch.matmul(val, k_r_b)
 
@@ -213,6 +232,8 @@ class BRGCN(MessagePassing):
                         val = v_r_b
                     else:
                         val = torch.matmul(k_r_b, k_r_b.t())
+                        if applySoftmax:
+                            val = F.log_softmax(val, dim=1)
                         val = self.our_sparse_multiply(val, edge_index)
                         val = torch.matmul(val, v_r_b)
 
