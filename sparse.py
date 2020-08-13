@@ -1,6 +1,5 @@
 import torch
 
-
 def upsize_rows(x, rows, cols, add_row):
     first_half = x[0:int(rows/2), :]
     second_half = x[int(rows/2):, :]
@@ -23,14 +22,14 @@ def downsize_rows(x, rows, cols, remove_row):
     new_x = torch.cat([first_half, second_half], dim=0)
     return new_x
 
-# need to change 7
+
 def downsize_cols(x, rows, cols, remove_col):
     first_half = x[:, 0:int(cols/7)]
     second_half = x[:, int(cols/7)+remove_col:]
     new_x = torch.cat([first_half, second_half], dim=1)
     return new_x
 
-# need to change 7
+
 def to_sparse(x):
     """ converts dense tensor x to sparse format """
     x_typename = torch.typename(x).split('.')[-1]

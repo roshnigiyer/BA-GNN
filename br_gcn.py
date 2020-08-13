@@ -31,6 +31,7 @@ class BRGCN(MessagePassing):
         self.basis_0 = Param(torch.Tensor(num_relations, in_channels, out_channels))
         self.att = Param(torch.Tensor(num_relations, num_bases))
         self.gat_att = Param(torch.Tensor(self.num_relations, self.in_channels*self.out_channels))
+
         self.relation_weight_1 = Param(torch.Tensor(num_relations, self.num_nodes, self.num_nodes))
         self.relation_weight_2 = Param(torch.Tensor(num_relations, self.num_nodes, self.num_nodes))
         self.relation_weight_3 = Param(torch.Tensor(num_relations, self.num_nodes, self.num_nodes))
@@ -48,6 +49,7 @@ class BRGCN(MessagePassing):
         self.reset_parameters()
 
         gen.maybe_dim_size = self.maybe_dim_size_rGATConv
+
 
     def maybe_dim_size_rGATConv(self, index, dim_size=None):
         if dim_size is not None:
@@ -99,6 +101,104 @@ class BRGCN(MessagePassing):
         y[edge_index[0], edge_index[1]] = x[edge_index[0], edge_index[1]]
         return y
 
+    ###########################
+    # forward helper functions#
+    ###########################
+
+    def fullBatchedRelAttention(self, q_r_a, k_r_b, v_r_b, applySoftmax, edge_index):
+        if (q_r_a is None):
+            if (k_r_b is None):
+                val = v_r_b
+            else:
+                val = torch.matmul(k_r_b, k_r_b.t())
+                if applySoftmax:
+                    val = F.log_softmax(val, dim=1)
+                val = self.our_sparse_multiply(val, edge_index)
+                val = torch.matmul(val, v_r_b)
+
+        else:
+            if (k_r_b is None):
+                val = torch.matmul(q_r_a, q_r_a.t())
+                if applySoftmax:
+                    val = F.log_softmax(val, dim=1)
+                val = self.our_sparse_multiply(val, edge_index)
+                val = torch.matmul(val, v_r_b)
+
+            else:
+                val = torch.matmul(q_r_a, k_r_b.t())
+                if applySoftmax:
+                    val = F.log_softmax(val, dim=1)
+                val = self.our_sparse_multiply(val, edge_index)
+                val = torch.matmul(val, v_r_b)
+        return val
+
+    def partialBatchedRelAttention(self, q_r_a, k_r_b, v_r_b, applySoftmax, edge_index):
+        if (q_r_a is None):
+            if (k_r_b is None):
+                val = v_r_b
+            else:
+                val = torch.matmul(v_r_b, k_r_b.t())
+                if applySoftmax:
+                    val = F.log_softmax(val, dim=1)
+
+                val = self.our_sparse_multiply(val, edge_index)
+                val = torch.matmul(val, k_r_b)
+
+        else:
+            if (k_r_b is None):
+                val = torch.matmul(v_r_b, q_r_a.t())
+                if applySoftmax:
+                    val = F.log_softmax(val, dim=1)
+                val = self.our_sparse_multiply(val, edge_index)
+                val = torch.matmul(val, q_r_a)
+
+            else:
+                val = torch.matmul(v_r_b, q_r_a.t())
+                if applySoftmax:
+                    val = F.log_softmax(val, dim=1)
+                val = self.our_sparse_multiply(val, edge_index)
+                val = torch.matmul(val, k_r_b)
+        return val
+
+    def no_outer_relations(self, x, freq_relations_inner, edge_index, edge_type, num_rows, applySoftmax, final_node_embeddings):
+        for r_b in freq_relations_inner:
+            idx = torch.where(edge_type == r_b)[0]
+            aggr_for_edge_type_b = self.getRelationFeatures(x, edge_index, idx, edge_type)
+
+            if (aggr_for_edge_type_b is None):
+                continue
+
+            aggr_for_edge_type_b_avg = aggr_for_edge_type_b[0:num_rows, :]
+
+            k_r_b = torch.matmul(self.relation_weight_2[r_b, :, :], aggr_for_edge_type_b_avg)
+            v_r_b = torch.matmul(self.relation_weight_3[r_b, :, :], aggr_for_edge_type_b)
+
+            aggr_for_edge_type_b = None
+            aggr_for_edge_type_b_avg = None
+
+            try:
+                if (k_r_b is None):
+                    val = v_r_b
+                else:
+                    val = torch.matmul(k_r_b, k_r_b.t())
+                    if applySoftmax:
+                        val = F.log_softmax(val, dim=1)
+                    val = self.our_sparse_multiply(val, edge_index)
+                    val = torch.matmul(val, v_r_b)
+
+                final_node_embeddings += val
+
+            except Exception as e:
+                print('k_r_b.t(): ', k_r_b.t().size())
+                print('v_r_b.t(): ', v_r_b.t().size())
+                print('final_node_embeddings: ', final_node_embeddings.size())
+                print(e)
+                print("skipping over r_b: ", r_b)
+        return final_node_embeddings
+
+    #########################################
+    #########################################
+
 
     def forward(self, x, edge_index, edge_type, edge_norm=None, size=None):
 
@@ -115,7 +215,6 @@ class BRGCN(MessagePassing):
 
         freq_relations_outer = self.topKElems(edge_type, num_relations_outer)
         freq_relations_inner = self.topKElems(edge_type, num_relations_inner)
-
 
         e0 = edge_index[0][edge_index[0] < num_rows]
         e1 = edge_index[1][edge_index[1] < num_rows]
@@ -154,99 +253,17 @@ class BRGCN(MessagePassing):
                     aggr_for_edge_type_b_avg = None
 
                     if (num_rows == self.num_nodes):
-                        if (q_r_a is None):
-                            if (k_r_b is None):
-                                val = v_r_b
-                            else:
-                                val = torch.matmul(k_r_b, k_r_b.t())
-                                if applySoftmax:
-                                    val = F.log_softmax(val, dim=1)
-                                val = self.our_sparse_multiply(val, edge_index)
-                                val = torch.matmul(val, v_r_b)
-
-                        else:
-                            if (k_r_b is None):
-                                val = torch.matmul(q_r_a, q_r_a.t())
-                                if applySoftmax:
-                                    val = F.log_softmax(val, dim=1)
-                                val = self.our_sparse_multiply(val, edge_index)
-                                val = torch.matmul(val, v_r_b)
-
-                            else:
-                                val = torch.matmul(q_r_a, k_r_b.t())
-                                if applySoftmax:
-                                    val = F.log_softmax(val, dim=1)
-                                val = self.our_sparse_multiply(val, edge_index)
-                                val = torch.matmul(val, v_r_b)
+                        val = self.fullBatchedRelAttention(q_r_a, k_r_b, v_r_b, applySoftmax, edge_index)
 
                     # if using batched version
                     if (num_rows < self.num_nodes):
-                        if (q_r_a is None):
-                            if (k_r_b is None):
-                                val = v_r_b
-                            else:
-                                val = torch.matmul(v_r_b, k_r_b.t())
-                                if applySoftmax:
-                                    val = F.log_softmax(val, dim=1)
-                                val = self.our_sparse_multiply(val, edge_index)
-                                val = torch.matmul(val, k_r_b)
-
-                        else:
-                            if (k_r_b is None):
-                                val = torch.matmul(v_r_b, q_r_a.t())
-                                if applySoftmax:
-                                    val = F.log_softmax(val, dim=1)
-                                val = self.our_sparse_multiply(val, edge_index)
-                                val = torch.matmul(val, q_r_a)
-
-                            else:
-                                val = torch.matmul(v_r_b, q_r_a.t())
-                                if applySoftmax:
-                                    val = F.log_softmax(val, dim=1)
-                                val = self.our_sparse_multiply(val, edge_index)
-                                val = torch.matmul(val, k_r_b)
-
+                        val = self.partialBatchedRelAttention(q_r_a, k_r_b, v_r_b, applySoftmax, edge_index)
 
                     final_node_embeddings += val
 
                 aggr_for_edge_type_a = None
-
         else:
-            for r_b in freq_relations_inner:
-                idx = torch.where(edge_type == r_b)[0]
-                aggr_for_edge_type_b = self.getRelationFeatures(x, edge_index, idx, edge_type)
-
-                if (aggr_for_edge_type_b is None):
-                    continue
-
-                aggr_for_edge_type_b_avg = aggr_for_edge_type_b[0:num_rows, :]
-
-                k_r_b = torch.matmul(self.relation_weight_2[r_b, :, :], aggr_for_edge_type_b_avg)
-                v_r_b = torch.matmul(self.relation_weight_3[r_b, :, :], aggr_for_edge_type_b)
-
-                aggr_for_edge_type_b = None
-                aggr_for_edge_type_b_avg = None
-
-                try:
-                    if (k_r_b is None):
-                        val = v_r_b
-                    else:
-                        val = torch.matmul(k_r_b, k_r_b.t())
-                        if applySoftmax:
-                            val = F.log_softmax(val, dim=1)
-                        val = self.our_sparse_multiply(val, edge_index)
-                        val = torch.matmul(val, v_r_b)
-
-                    final_node_embeddings += val
-
-                except Exception as e:
-                    print('k_r_b.t(): ', k_r_b.t().size())
-                    print('v_r_b.t(): ', v_r_b.t().size())
-                    print('final_node_embeddings: ', final_node_embeddings.size())
-                    print(e)
-                    print("skipping over r_b: ", r_b)
-
-
+            final_node_embeddings = self.no_outer_relations(x, freq_relations_inner, edge_index, edge_type, num_rows, applySoftmax, final_node_embeddings)
         return final_node_embeddings
 
 
